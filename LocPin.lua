@@ -1,6 +1,7 @@
 SLASH_LOCPIN1 = "/loc"
 SLASH_LOCPINP1 = "/locpin"
 SLASH_LOCDIAG1 = "/locdiag"
+SLASH_LOCPROBE1 = "/locprobe"
 
 local LocPin = {
     x = nil,
@@ -58,6 +59,53 @@ local PIN_TEXTURES = {
 
 local function bit(v)
     return v and "1" or "0"
+end
+
+local function bitFromBool(v)
+    return v and 1 or 0
+end
+
+local function appendBit(bits, v)
+    bits[#bits + 1] = bitFromBool(v)
+end
+
+local function bitsToString(bits)
+    local out = {}
+
+    for i = 1, #bits do
+        out[i] = bits[i] == 1 and "1" or "0"
+    end
+
+    return table.concat(out)
+end
+
+local function bitsToHex(bits)
+    local hex = "0123456789ABCDEF"
+    local out = {}
+    local nibble = 0
+    local nibbleBits = 0
+
+    for i = 1, #bits do
+        nibble = (nibble * 2) + (bits[i] == 1 and 1 or 0)
+        nibbleBits = nibbleBits + 1
+
+        if nibbleBits == 4 then
+            out[#out + 1] = hex:sub(nibble + 1, nibble + 1)
+            nibble = 0
+            nibbleBits = 0
+        end
+    end
+
+    if nibbleBits > 0 then
+        nibble = nibble * (2 ^ (4 - nibbleBits))
+        out[#out + 1] = hex:sub(nibble + 1, nibble + 1)
+    end
+
+    return table.concat(out)
+end
+
+local function status(v)
+    return v and "OK" or "FAIL"
 end
 
 local function trim(s)
@@ -323,6 +371,220 @@ local function clearPin()
     print("LocPin: cleared pin.")
 end
 
+local function probeLine(group, check, ok, details)
+    print(string.format(
+        "LP11508|%s|%s|%s|%s",
+        tostring(group or "GEN"),
+        tostring(check or "unknown"),
+        ok and "OK" or "FAIL",
+        tostring(details or "")
+    ))
+end
+
+local function runMapProbe()
+    local pass, total = 0, 0
+    local function check(name, ok, details)
+        total = total + 1
+        if ok then pass = pass + 1 end
+        probeLine("MAP", name, ok, details)
+    end
+
+    local currentMapID = getCurrentZoneMapID()
+    local shownMapID = getShownMapID()
+
+    check("C_Map.GetBestMapForUnit", C_Map and C_Map.GetBestMapForUnit, "current=" .. tostring(currentMapID))
+    check("WorldMapFrame.GetMapID", WorldMapFrame and WorldMapFrame.GetMapID, "shown=" .. tostring(shownMapID))
+    check("WorldMapFrame.SetMapID", WorldMapFrame and WorldMapFrame.SetMapID, "set-capability")
+
+    if WorldMapFrame and WorldMapFrame.SetMapID and currentMapID then
+        local before = getShownMapID()
+        WorldMapFrame:SetMapID(currentMapID)
+        local after = getShownMapID()
+        check("SetMapID-roundtrip", after == currentMapID, "before=" .. tostring(before) .. ",after=" .. tostring(after))
+    else
+        check("SetMapID-roundtrip", false, "missing SetMapID or current mapID")
+    end
+
+    return pass, total
+end
+
+local function runCanvasProbe()
+    local pass, total = 0, 0
+    local function check(name, ok, details)
+        total = total + 1
+        if ok then pass = pass + 1 end
+        probeLine("CANVAS", name, ok, details)
+    end
+
+    local W = WorldMapFrame
+    local S = W and W.ScrollContainer
+    local child = S and S.Child
+    local canvasFromFunc = S and S.GetCanvas and S:GetCanvas() or nil
+    local canvas = getMapCanvas()
+
+    check("WorldMapFrame", W, "exists=" .. status(W))
+    check("ScrollContainer", S, "exists=" .. status(S))
+    check("ScrollContainer.Child", child, "exists=" .. status(child))
+    check("ScrollContainer.GetCanvas", S and S.GetCanvas, "exists=" .. status(S and S.GetCanvas))
+    check("getMapCanvas", canvas, "type=" .. tostring(type(canvas)))
+
+    if canvas and canvas.GetWidth and canvas.GetHeight then
+        local w = canvas:GetWidth() or 0
+        local h = canvas:GetHeight() or 0
+        check("canvas-dimensions", w > 0 and h > 0, string.format("w=%.2f,h=%.2f", w, h))
+    else
+        check("canvas-dimensions", false, "canvas width/height methods unavailable")
+    end
+
+    if child then
+        check("canvas-path", true, "path=ScrollContainer.Child")
+    elseif canvasFromFunc then
+        check("canvas-path", true, "path=ScrollContainer:GetCanvas()")
+    elseif canvas then
+        check("canvas-path", true, "path=WorldMapFrame fallback")
+    else
+        check("canvas-path", false, "no canvas path")
+    end
+
+    return pass, total
+end
+
+local function runMarkerProbe()
+    local pass, total = 0, 0
+    local function check(name, ok, details)
+        total = total + 1
+        if ok then pass = pass + 1 end
+        probeLine("MARKER", name, ok, details)
+    end
+
+    local frame = CreateFrame and CreateFrame("Frame")
+    check("CreateFrame", frame, "exists=" .. status(frame))
+
+    local tex = frame and frame.CreateTexture and frame:CreateTexture(nil, "OVERLAY")
+    check("CreateTexture", tex, "exists=" .. status(tex))
+
+    check("Texture.SetTexture", tex and tex.SetTexture, "exists=" .. status(tex and tex.SetTexture))
+    check("Texture.SetPoint", tex and tex.SetPoint, "exists=" .. status(tex and tex.SetPoint))
+    check("Texture.SetSize", tex and tex.SetSize, "exists=" .. status(tex and tex.SetSize))
+    check("Texture.SetParent", tex and tex.SetParent, "exists=" .. status(tex and tex.SetParent))
+    check("Texture.Show", tex and tex.Show, "exists=" .. status(tex and tex.Show))
+    check("Texture.Hide", tex and tex.Hide, "exists=" .. status(tex and tex.Hide))
+
+    if tex and tex.SetTexture then
+        tex:SetTexture(PIN_TEXTURES.circle)
+        check("Texture.SetTexture-call", true, "texture assigned")
+    else
+        check("Texture.SetTexture-call", false, "cannot assign texture")
+    end
+
+    return pass, total
+end
+
+local function runTooltipProbe()
+    local pass, total = 0, 0
+    local function check(name, ok, details)
+        total = total + 1
+        if ok then pass = pass + 1 end
+        probeLine("TOOLTIP", name, ok, details)
+    end
+
+    check("GameTooltip", GameTooltip, "exists=" .. status(GameTooltip))
+    check("SetOwner", GameTooltip and GameTooltip.SetOwner, "exists=" .. status(GameTooltip and GameTooltip.SetOwner))
+    check("AddLine", GameTooltip and GameTooltip.AddLine, "exists=" .. status(GameTooltip and GameTooltip.AddLine))
+    check("Show", GameTooltip and GameTooltip.Show, "exists=" .. status(GameTooltip and GameTooltip.Show))
+    check("Hide", GameTooltip and GameTooltip.Hide, "exists=" .. status(GameTooltip and GameTooltip.Hide))
+
+    return pass, total
+end
+
+local function getDiagnosticBits()
+    local bits = {}
+    local W = WorldMapFrame
+    local S = W and W.ScrollContainer
+    local F = CreateFrame and CreateFrame("Frame")
+    local TX = F and F.CreateTexture and F:CreateTexture(nil, "OVERLAY")
+    local currentMapID = getCurrentZoneMapID()
+    local shownMapID = getShownMapID()
+    local canvas = getMapCanvas()
+
+    appendBit(bits, C_Map)
+    appendBit(bits, C_Map and C_Map.GetBestMapForUnit)
+    appendBit(bits, C_Map and C_Map.SetUserWaypoint)
+    appendBit(bits, C_Map and C_Map.ClearUserWaypoint)
+    appendBit(bits, UiMapPoint)
+    appendBit(bits, CreateVector2D)
+    appendBit(bits, W)
+    appendBit(bits, W and W.GetMapID)
+    appendBit(bits, W and W.SetMapID)
+    appendBit(bits, S)
+    appendBit(bits, S and S.Child)
+    appendBit(bits, S and S.GetCanvas)
+    appendBit(bits, CreateFrame)
+    appendBit(bits, F and F.CreateTexture)
+    appendBit(bits, TX)
+    appendBit(bits, TX and TX.SetTexture)
+    appendBit(bits, TX and TX.SetAtlas)
+    appendBit(bits, TX and TX.SetTexCoord)
+    appendBit(bits, TX and TX.SetVertexColor)
+    appendBit(bits, TX and TX.SetSize)
+    appendBit(bits, TX and TX.SetPoint)
+    appendBit(bits, TX and TX.SetParent)
+    appendBit(bits, TX and TX.Show)
+    appendBit(bits, TX and TX.Hide)
+    appendBit(bits, TX and TX.SetDrawLayer)
+    appendBit(bits, ToggleWorldMap)
+    appendBit(bits, currentMapID)
+    appendBit(bits, shownMapID)
+    appendBit(bits, canvas)
+    appendBit(bits, canvas and canvas.GetWidth and canvas.GetHeight)
+
+    if canvas and canvas.GetWidth and canvas.GetHeight then
+        local w = canvas:GetWidth() or 0
+        local h = canvas:GetHeight() or 0
+        appendBit(bits, w > 0 and h > 0)
+    else
+        appendBit(bits, false)
+    end
+
+    appendBit(bits, GameTooltip)
+    appendBit(bits, GameTooltip and GameTooltip.SetOwner)
+    appendBit(bits, GameTooltip and GameTooltip.AddLine)
+    appendBit(bits, GameTooltip and GameTooltip.Show)
+    appendBit(bits, GameTooltip and GameTooltip.Hide)
+
+    return bits, currentMapID, shownMapID
+end
+
+local function printDiagnosticShort(prefix)
+    local bits, currentMapID, shownMapID = getDiagnosticBits()
+    local hex = bitsToHex(bits)
+
+    print(string.format(
+        "%s %s %s %s n=%d",
+        prefix or "LPB1",
+        hex,
+        tostring(currentMapID),
+        tostring(shownMapID),
+        #bits
+    ))
+end
+
+local function printDiagnosticFull(prefix)
+    local bits, currentMapID, shownMapID = getDiagnosticBits()
+    local binary = bitsToString(bits)
+    local hex = bitsToHex(bits)
+
+    print(string.format(
+        "%s|v1|n=%d|b=%s|h=%s|cur=%s|shown=%s",
+        prefix or "LPB11508",
+        #bits,
+        binary,
+        hex,
+        tostring(currentMapID),
+        tostring(shownMapID)
+    ))
+end
+
 -- Simple command for you:
 -- /loc 81.2,30.1
 -- /loc 81.2 30.1
@@ -405,7 +667,19 @@ SlashCmdList["LOCPINP"] = function(msg)
     setPin(mapID, resolvedZoneName, x, y, name, pinType, desc)
 end
 
-SlashCmdList["LOCDIAG"] = function()
+SlashCmdList["LOCDIAG"] = function(msg)
+    msg = trim(msg or "")
+
+    if msg == "" or normalizeZone(msg) == "short" then
+        printDiagnosticShort("LPB1")
+        return
+    end
+
+    if normalizeZone(msg) == "binary" or normalizeZone(msg) == "full" then
+        printDiagnosticFull("LPB11508")
+        return
+    end
+
     local W = WorldMapFrame
     local S = W and W.ScrollContainer
     local F = CreateFrame and CreateFrame("Frame")
@@ -442,6 +716,55 @@ SlashCmdList["LOCDIAG"] = function()
 
     print("CurrentZoneMapID:" .. tostring(getCurrentZoneMapID()))
     print("ShownMapID:" .. tostring(getShownMapID()))
+
+    if normalizeZone(msg) == "verbose" then
+        local mapPass, mapTotal = runMapProbe()
+        local canvasPass, canvasTotal = runCanvasProbe()
+        local markerPass, markerTotal = runMarkerProbe()
+        local tooltipPass, tooltipTotal = runTooltipProbe()
+        local pass = mapPass + canvasPass + markerPass + tooltipPass
+        local total = mapTotal + canvasTotal + markerTotal + tooltipTotal
+
+        print(string.format("LP11508|SUMMARY|diag-verbose|OK|%d/%d checks passed", pass, total))
+    end
+end
+
+SlashCmdList["LOCPROBE"] = function(msg)
+    local which = normalizeZone(msg)
+    if which == "" then which = "all" end
+
+    local pass, total = 0, 0
+
+    if which == "map" or which == "all" then
+        local p, t = runMapProbe()
+        pass = pass + p
+        total = total + t
+    end
+
+    if which == "canvas" or which == "all" then
+        local p, t = runCanvasProbe()
+        pass = pass + p
+        total = total + t
+    end
+
+    if which == "marker" or which == "all" then
+        local p, t = runMarkerProbe()
+        pass = pass + p
+        total = total + t
+    end
+
+    if which == "tooltip" or which == "all" then
+        local p, t = runTooltipProbe()
+        pass = pass + p
+        total = total + t
+    end
+
+    if total == 0 then
+        print("Usage: /locprobe [map|canvas|marker|tooltip|all]")
+        return
+    end
+
+    print(string.format("LP11508|SUMMARY|locprobe-%s|OK|%d/%d checks passed", which, pass, total))
 end
 
 local watcher = CreateFrame("Frame")
