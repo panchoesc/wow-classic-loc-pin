@@ -14,33 +14,88 @@ local LocPin = {
     marker = nil,
 }
 
--- Add more zones here as needed.
--- These are the important early Alliance / Paladin-route zones.
+-- Classic Era outdoor zones and capital city map IDs.
+-- Keys are normalized by normalizeZone(), so use lowercase aliases here.
 local ZONES = {
     ["current"] = "current",
 
+    -- Eastern Kingdoms
+    ["alterac mountains"] = 1416,
+    ["alterac"] = 1416,
+    ["arathi highlands"] = 1417,
+    ["arathi"] = 1417,
+    ["badlands"] = 1418,
+    ["blasted lands"] = 1419,
+    ["blasted"] = 1419,
+    ["tirisfal glades"] = 1420,
+    ["tirisfal"] = 1420,
+    ["silverpine forest"] = 1421,
+    ["silverpine"] = 1421,
+    ["western plaguelands"] = 1422,
+    ["wpl"] = 1422,
+    ["eastern plaguelands"] = 1423,
+    ["epl"] = 1423,
+    ["hillsbrad foothills"] = 1424,
+    ["hillsbrad"] = 1424,
+    ["the hinterlands"] = 1425,
+    ["hinterlands"] = 1425,
     ["dun morogh"] = 1426,
+    ["searing gorge"] = 1427,
+    ["searing"] = 1427,
+    ["burning steppes"] = 1428,
+    ["burning"] = 1428,
     ["elwynn forest"] = 1429,
+    ["elwynn"] = 1429,
+    ["deadwind pass"] = 1430,
+    ["deadwind"] = 1430,
+    ["duskwood"] = 1431,
     ["loch modan"] = 1432,
-    ["westfall"] = 1436,
     ["redridge mountains"] = 1433,
     ["redridge"] = 1433,
-    ["duskwood"] = 1431,
+    ["stranglethorn vale"] = 1434,
+    ["stranglethorn"] = 1434,
+    ["stv"] = 1434,
+    ["swamp of sorrows"] = 1435,
+    ["sos"] = 1435,
+    ["westfall"] = 1436,
     ["wetlands"] = 1437,
-
     ["stormwind"] = 1453,
     ["stormwind city"] = 1453,
     ["ironforge"] = 1455,
+    ["undercity"] = 1458,
+    ["uc"] = 1458,
 
+    -- Kalimdor
+    ["durotar"] = 1411,
+    ["mulgore"] = 1412,
+    ["the barrens"] = 1413,
+    ["barrens"] = 1413,
+    ["teldrassil"] = 1438,
     ["darkshore"] = 1439,
     ["ashenvale"] = 1440,
-    ["silverpine forest"] = 1421,
-    ["silverpine"] = 1421,
-
-    ["arathi highlands"] = 1417,
-    ["arathi"] = 1417,
-    ["stranglethorn vale"] = 1434,
-    ["stv"] = 1434,
+    ["thousand needles"] = 1441,
+    ["1k needles"] = 1441,
+    ["stonetalon mountains"] = 1442,
+    ["stonetalon"] = 1442,
+    ["desolace"] = 1443,
+    ["feralas"] = 1444,
+    ["dustwallow marsh"] = 1445,
+    ["dustwallow"] = 1445,
+    ["tanaris"] = 1446,
+    ["azshara"] = 1447,
+    ["felwood"] = 1448,
+    ["ungoro crater"] = 1449,
+    ["un'goro crater"] = 1449,
+    ["un'goro"] = 1449,
+    ["ungoro"] = 1449,
+    ["moonglade"] = 1450,
+    ["silithus"] = 1451,
+    ["winterspring"] = 1452,
+    ["orgrimmar"] = 1454,
+    ["org"] = 1454,
+    ["thunder bluff"] = 1456,
+    ["tb"] = 1456,
+    ["darnassus"] = 1457,
 }
 
 local PIN_TEXTURES = {
@@ -290,8 +345,9 @@ local function updateMarker()
 
     local shownMapID = getShownMapID()
 
-    if WorldMapFrame and WorldMapFrame:IsShown() and WorldMapFrame.SetMapID and shownMapID ~= LocPin.mapID then
-        WorldMapFrame:SetMapID(LocPin.mapID)
+    if shownMapID and shownMapID ~= LocPin.mapID then
+        if LocPin.marker then LocPin.marker:Hide() end
+        return
     end
 
     local canvas = getMapCanvas()

@@ -32,6 +32,7 @@ Minimal World of Warcraft Classic Era addon for creating quick world map pins vi
 ## Notes
 
 - Uses `C_Map.GetBestMapForUnit("player")` for the current zone.
+- `/locpin` supports Classic Era outdoor zones and capital cities by name, plus common aliases such as `stv`, `wpl`, `epl`, `org`, `tb`, and `uc`.
 - Does not rely on `C_Map.SetUserWaypoint` or `C_Map.ClearUserWaypoint`.
 - Draws a custom overlay marker on the world map canvas.
 - The pin shows a tooltip with name, zone, coordinates, and description when hovered.
