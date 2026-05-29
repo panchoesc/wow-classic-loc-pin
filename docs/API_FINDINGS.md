@@ -1,5 +1,11 @@
 # LocPin API Compatibility Guide (WoW Classic Era 11508)
 
+This document is intended for LocPin development, debugging, and compatibility
+testing. Normal installation and usage instructions live in `README.md`.
+
+Most users do not need this document. Use it when troubleshooting map behavior,
+checking Classic Era API compatibility, or sharing diagnostic/probe output.
+
 This document tracks **observed runtime API behavior** for `## Interface: 11508`.
 
 The goal is to avoid assumptions from mixed-era docs and rely on what the client
@@ -59,6 +65,20 @@ Classic Era 11508 client.
 
 Run these in-game:
 
+- `/lp diag`
+- `/lp diag full`
+- `/lp diag legacy`
+- `/lp diag verbose`
+- `/lp probe map`
+- `/lp probe canvas`
+- `/lp probe marker`
+- `/lp probe tooltip`
+- `/lp probe all`
+- `/lp status`
+- `/lp debug`
+
+Compatibility aliases remain available:
+
 - `/locdiag`
 - `/locdiag short`
 - `/locdiag full`
@@ -71,10 +91,14 @@ Run these in-game:
 - `/locprobe tooltip`
 - `/locprobe all`
 
+Human-readable LocPin messages use a colored addon prefix. Machine-readable
+diagnostic lines such as `LPB1 ...` and `LP11508|...` intentionally remain plain
+and stable for copying, screenshots, and comparison.
+
 ## Screenshot-friendly binary diagnostic format
 
-`/locdiag` prints a single short fixed-order hex payload that is easier to share
-from a screenshot than many probe lines:
+`/lp diag` and `/locdiag` print a single short fixed-order hex payload that is
+easier to share from a screenshot than many probe lines:
 
 - `LPB1 <hex bits> <currentMapID> <shownMapID> n=36`
 
@@ -90,9 +114,9 @@ Fields:
 - `<shownMapID>` is `WorldMapFrame:GetMapID()` at capture time.
 - `n=36` is the number of meaningful bits in the payload.
 
-`/locdiag short` is an alias for `/locdiag`.
+`/lp diag short` and `/locdiag short` are aliases for the default short diagnostic.
 
-`/locdiag full` prints the full labeled payload:
+`/lp diag full` and `/locdiag full` print the full labeled payload:
 
 - `LPB11508|v1|n=36|b=<binary bits>|h=<hex bits>|cur=<mapID>|shown=<mapID>`
 
@@ -108,7 +132,7 @@ Full fields:
 
 `/locdiag binary` is an alias for `/locdiag full`.
 
-`/locdiag legacy` prints the previous `LD:` bit string and current/shown map IDs.
+`/lp diag legacy` and `/locdiag legacy` print the previous `LD:` bit string and current/shown map IDs.
 
 ### Binary diagnostic v1 bit layout
 
@@ -153,7 +177,7 @@ Full fields:
 
 ## Stable output format
 
-`/locdiag verbose` and `/locprobe` still print detailed stable probe lines:
+`/lp diag verbose`, `/lp probe`, `/locdiag verbose`, and `/locprobe` still print detailed stable probe lines:
 
 - `LP11508|GROUP|CHECK|OK|details`
 - `LP11508|GROUP|CHECK|FAIL|details`
@@ -161,6 +185,15 @@ Full fields:
 Summary lines:
 
 - `LP11508|SUMMARY|...|OK|pass/total checks passed`
+
+Verbose probe mode can include return-shape diagnostics for selected API calls,
+using compact details such as:
+
+- `returnCount=1,v1=number:1433`
+- `error=function missing`
+
+This helps distinguish between APIs that are missing, APIs that error, and APIs
+that exist but return an unexpected shape.
 
 ## Decoded API availability
 
@@ -403,11 +436,23 @@ The supported implementation path is:
    `Texture:SetTexture`.
 7. Convert normalized coordinates to canvas pixels using `GetWidth()` and
    `GetHeight()`.
-8. Show hover details using `GameTooltip`.
+8. Show hover details using `GameTooltip`
 
 When the user browses to a different map, LocPin should hide the active marker
 instead of snapping the world map back to the pinned map. The marker can reappear
 when the pinned map is shown again.
+
+LocPin's public command API should prefer the consolidated `/lp` root command:
+
+1. `/lp here <x,y>` for current-zone pins.
+2. `/lp pin <name> <zone> <x,y> [type] [description]` for rich pins.
+3. `/lp clear` to clear the active pin.
+4. `/lp show` to explicitly jump back to the pinned map.
+5. `/lp status` and `/lp debug` for human-readable troubleshooting.
+6. `/lp diag ...` and `/lp probe ...` for machine-readable compatibility checks.
+
+Older commands such as `/loc`, `/locpin`, `/locdiag`, and `/locprobe` remain as
+compatibility aliases.
 
 The unavailable waypoint APIs should be treated as unsupported for this client.
 Any future implementation that tries to use native waypoints must first prove
