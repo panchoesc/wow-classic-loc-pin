@@ -2,19 +2,129 @@
 
 Minimal World of Warcraft Classic Era addon for creating quick world map pins via chat commands.
 
+## Installation
+
+LocPin must be installed as a WoW addon folder named `LocPin`.
+
+### 1. Download the addon
+
+Download this repository from GitHub, either by cloning it or using **Code → Download ZIP**.
+
+If you downloaded a ZIP, unzip it first.
+
+### 2. Create the addon folder
+
+Create or copy the addon into a folder named:
+
+```text
+LocPin
+```
+
+The important part is that these files are directly inside the `LocPin` folder:
+
+```text
+LocPin/LocPin.toc
+LocPin/LocPin.lua
+```
+
+Do **not** leave the files nested like this:
+
+```text
+LocPin/wow-classic-loc-pin/LocPin.toc
+```
+
+### 3. Copy `LocPin` into your AddOns directory
+
+macOS Classic Era path:
+
+```text
+/Applications/World of Warcraft/_classic_era_/Interface/AddOns/LocPin
+```
+
+Windows Classic Era path:
+
+```text
+C:\Program Files (x86)\World of Warcraft\_classic_era_\Interface\AddOns\LocPin
+```
+
+Final layout should look like:
+
+```text
+Interface/AddOns/LocPin/LocPin.toc
+Interface/AddOns/LocPin/LocPin.lua
+```
+
+### 4. Restart or reload WoW
+
+Start WoW Classic Era, or run this in chat if the game is already open:
+
+```text
+/reload
+```
+
+Then confirm **LocPin** is enabled in the AddOns list.
+
 ## Commands
 
-- `/loc x,y` — place a pin at coordinates in your current zone.
-- `/loc x y` — same as above, space-separated.
-- `/loc` — clear the current pin.
-- `/locpin Name "Zone Name" x,y pinType "Description"` — place a named pin in a specified zone.
-- `/locdiag` — print one short binary-encoded client API diagnostic line for screenshots.
-- `/locdiag short` — same as `/locdiag`.
-- `/locdiag full` — print the full labeled binary diagnostic line.
-- `/locdiag binary` — same as `/locdiag full`.
-- `/locdiag legacy` — print the older compact `LD:` bit string plus current/shown map IDs.
-- `/locdiag verbose` — run expanded grouped diagnostics and summary for interface 11508 assumptions.
-- `/locprobe [map|canvas|marker|tooltip|all]` — run deterministic API probes and print stable structured lines.
+### Quick pin
+
+Place a pin in your current zone:
+
+```text
+/loc 50,50
+```
+
+Clear the active pin:
+
+```text
+/loc
+```
+
+### Main command
+
+Show help:
+
+```text
+/lp help
+```
+
+Place a pin in your current zone:
+
+```text
+/lp here 50,50
+```
+
+Place a named pin in a specific zone:
+
+```text
+/lp pin "Keeshan" "Redridge Mountains" 28.5,12.1 quest "Missing In Action"
+```
+
+Jump back to the active pin's map:
+
+```text
+/lp show
+```
+
+Clear the active pin:
+
+```text
+/lp clear
+```
+
+Show zone/alias examples:
+
+```text
+/lp zones
+```
+
+## Examples
+
+```text
+/lp pin "STV Camp" stv 35,45 skull "Camp location"
+/lp pin "Ironforge Bank" ironforge 35,60 square "Bank/AH area"
+/lp pin "Un'Goro Route" ungoro 44,66 diamond "Route marker"
+```
 
 ## Supported pin types
 
@@ -31,40 +141,9 @@ Minimal World of Warcraft Classic Era addon for creating quick world map pins vi
 
 ## Notes
 
-- Uses `C_Map.GetBestMapForUnit("player")` for the current zone.
-- Does not rely on `C_Map.SetUserWaypoint` or `C_Map.ClearUserWaypoint`.
+- Uses `C_Map.GetBestMapForUnit("player")` for current-zone pins.
+- Supports Classic Era outdoor zones and capital cities by name.
+- Common aliases include `stv`, `wpl`, `epl`, `org`, `tb`, `uc`, and `ungoro`.
 - Draws a custom overlay marker on the world map canvas.
-- The pin shows a tooltip with name, zone, coordinates, and description when hovered.
-
-## API diagnostics output format (11508)
-
-Screenshot-friendly diagnostic output uses one short line:
-
-- `LPB1 <hex bits> <currentMapID> <shownMapID> n=36`
-
-Example:
-
-- `LPB1 C7EFFFFFF 1455 947 n=36`
-
-The full labeled diagnostic output is available with `/locdiag full`:
-
-- `LPB11508|v1|n=36|b=<binary bits>|h=<hex bits>|cur=<mapID>|shown=<mapID>`
-
-The hex value is the same bitset as the full `b=` binary payload, encoded in uppercase hex for easier transcription.
-
-Use `/locdiag legacy` if you need the previous `LD:` output format.
-
-Verbose probe lines:
-
-- `LP11508|GROUP|CHECK|OK|details`
-- `LP11508|GROUP|CHECK|FAIL|details`
-
-Groups currently include:
-
-- `MAP`
-- `CANVAS`
-- `MARKER`
-- `TOOLTIP`
-- `SUMMARY`
-
-See `docs/API-11508.md` for the compatibility workflow.
+- The marker shows a tooltip with name, zone, coordinates, and description when hovered.
+- Browsing to another map will hide the active marker instead of locking your map view.

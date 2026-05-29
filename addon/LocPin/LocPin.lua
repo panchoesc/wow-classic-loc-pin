@@ -2,6 +2,12 @@ SLASH_LOCPIN1 = "/loc"
 SLASH_LOCPINP1 = "/locpin"
 SLASH_LOCDIAG1 = "/locdiag"
 SLASH_LOCPROBE1 = "/locprobe"
+SLASH_LOCPINROOT1 = "/lp"
+
+local ADDON_NAME = "LocPin"
+local ADDON_VERSION = "1.0"
+local INTERFACE_VERSION = 11508
+local DIAGNOSTIC_PREFIX = "LPB1"
 
 local LocPin = {
     x = nil,
@@ -14,33 +20,127 @@ local LocPin = {
     marker = nil,
 }
 
--- Add more zones here as needed.
--- These are the important early Alliance / Paladin-route zones.
+local function printRaw(message)
+    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+        DEFAULT_CHAT_FRAME:AddMessage(message)
+    else
+        print(message)
+    end
+end
+
+function LocPin:Info(message)
+    printRaw("|cff33ff99" .. ADDON_NAME .. "|r: " .. tostring(message))
+end
+
+function LocPin:Warn(message)
+    printRaw("|cffffff00" .. ADDON_NAME .. "|r: " .. tostring(message))
+end
+
+function LocPin:Error(message)
+    printRaw("|cffff3333" .. ADDON_NAME .. "|r: " .. tostring(message))
+end
+
+function LocPin:Debug(message)
+    printRaw("|cffaaaaaa" .. ADDON_NAME .. " debug|r: " .. tostring(message))
+end
+
+local function errorHandler(err)
+    if type(debugstack) == "function" then
+        return debugstack(tostring(err), 2, 6)
+    end
+
+    return tostring(err)
+end
+
+function LocPin:RunCommand(commandName, fn)
+    local ok, err = xpcall(fn, errorHandler)
+    if not ok then
+        self:Error(tostring(commandName or "command") .. " failed: " .. tostring(err))
+    end
+end
+
+-- Classic Era outdoor zones and capital city map IDs.
+-- Keys are normalized by normalizeZone(), so use lowercase aliases here.
 local ZONES = {
     ["current"] = "current",
 
+    -- Eastern Kingdoms
+    ["alterac mountains"] = 1416,
+    ["alterac"] = 1416,
+    ["arathi highlands"] = 1417,
+    ["arathi"] = 1417,
+    ["badlands"] = 1418,
+    ["blasted lands"] = 1419,
+    ["blasted"] = 1419,
+    ["tirisfal glades"] = 1420,
+    ["tirisfal"] = 1420,
+    ["silverpine forest"] = 1421,
+    ["silverpine"] = 1421,
+    ["western plaguelands"] = 1422,
+    ["wpl"] = 1422,
+    ["eastern plaguelands"] = 1423,
+    ["epl"] = 1423,
+    ["hillsbrad foothills"] = 1424,
+    ["hillsbrad"] = 1424,
+    ["the hinterlands"] = 1425,
+    ["hinterlands"] = 1425,
     ["dun morogh"] = 1426,
+    ["searing gorge"] = 1427,
+    ["searing"] = 1427,
+    ["burning steppes"] = 1428,
+    ["burning"] = 1428,
     ["elwynn forest"] = 1429,
+    ["elwynn"] = 1429,
+    ["deadwind pass"] = 1430,
+    ["deadwind"] = 1430,
+    ["duskwood"] = 1431,
     ["loch modan"] = 1432,
-    ["westfall"] = 1436,
     ["redridge mountains"] = 1433,
     ["redridge"] = 1433,
-    ["duskwood"] = 1431,
+    ["stranglethorn vale"] = 1434,
+    ["stranglethorn"] = 1434,
+    ["stv"] = 1434,
+    ["swamp of sorrows"] = 1435,
+    ["sos"] = 1435,
+    ["westfall"] = 1436,
     ["wetlands"] = 1437,
-
     ["stormwind"] = 1453,
     ["stormwind city"] = 1453,
     ["ironforge"] = 1455,
+    ["undercity"] = 1458,
+    ["uc"] = 1458,
 
+    -- Kalimdor
+    ["durotar"] = 1411,
+    ["mulgore"] = 1412,
+    ["the barrens"] = 1413,
+    ["barrens"] = 1413,
+    ["teldrassil"] = 1438,
     ["darkshore"] = 1439,
     ["ashenvale"] = 1440,
-    ["silverpine forest"] = 1421,
-    ["silverpine"] = 1421,
-
-    ["arathi highlands"] = 1417,
-    ["arathi"] = 1417,
-    ["stranglethorn vale"] = 1434,
-    ["stv"] = 1434,
+    ["thousand needles"] = 1441,
+    ["1k needles"] = 1441,
+    ["stonetalon mountains"] = 1442,
+    ["stonetalon"] = 1442,
+    ["desolace"] = 1443,
+    ["feralas"] = 1444,
+    ["dustwallow marsh"] = 1445,
+    ["dustwallow"] = 1445,
+    ["tanaris"] = 1446,
+    ["azshara"] = 1447,
+    ["felwood"] = 1448,
+    ["ungoro crater"] = 1449,
+    ["un'goro crater"] = 1449,
+    ["un'goro"] = 1449,
+    ["ungoro"] = 1449,
+    ["moonglade"] = 1450,
+    ["silithus"] = 1451,
+    ["winterspring"] = 1452,
+    ["orgrimmar"] = 1454,
+    ["org"] = 1454,
+    ["thunder bluff"] = 1456,
+    ["tb"] = 1456,
+    ["darnassus"] = 1457,
 }
 
 local PIN_TEXTURES = {
@@ -144,6 +244,62 @@ local function getShownMapID()
     return nil
 end
 
+local function diagnosticCall(fn, ...)
+    if type(fn) ~= "function" then
+        return { ok = false, error = "function missing", returnCount = 0, values = {} }
+    end
+
+    local returnCount = 0
+    local packedResults = nil
+    local function capture(...)
+        returnCount = select("#", ...)
+        packedResults = { ... }
+    end
+
+    local ok, err = pcall(function(...)
+        capture(fn(...))
+    end, ...)
+
+    if not ok then
+        return { ok = false, error = tostring(err), returnCount = 0, values = {} }
+    end
+
+    local diagnostic = { ok = true, returnCount = returnCount, values = {} }
+    for index = 1, math.min(returnCount, 4) do
+        local value = packedResults[index]
+        local valueType = type(value)
+        local entry = { index = index, type = valueType }
+
+        if valueType == "string" or valueType == "number" or valueType == "boolean" or value == nil then
+            entry.value = value
+        else
+            entry.value = valueType
+        end
+
+        diagnostic.values[#diagnostic.values + 1] = entry
+    end
+
+    return diagnostic
+end
+
+local function formatDiagnostic(diagnostic)
+    if not diagnostic.ok then
+        return "error=" .. tostring(diagnostic.error or "unknown")
+    end
+
+    local parts = { "returnCount=" .. tostring(diagnostic.returnCount or 0) }
+    for _, entry in ipairs(diagnostic.values or {}) do
+        parts[#parts + 1] = string.format(
+            "v%d=%s:%s",
+            entry.index,
+            tostring(entry.type),
+            tostring(entry.value)
+        )
+    end
+
+    return table.concat(parts, ",")
+end
+
 local function resolveZone(zoneName)
     local key = normalizeZone(zoneName)
 
@@ -201,7 +357,7 @@ end
 
 local function ensureMapOpenOnPinnedZone()
     if not WorldMapFrame then
-        print("LocPin: WorldMapFrame not available.")
+        LocPin:Warn("WorldMapFrame not available.")
         return false
     end
 
@@ -235,7 +391,7 @@ local function ensureMarker()
     local canvas = getMapCanvas()
 
     if not canvas then
-        print("LocPin: map canvas not found. Open your map once and try again.")
+        LocPin:Warn("map canvas not found. Open your map once and try again.")
         return nil
     end
 
@@ -290,8 +446,9 @@ local function updateMarker()
 
     local shownMapID = getShownMapID()
 
-    if WorldMapFrame and WorldMapFrame:IsShown() and WorldMapFrame.SetMapID and shownMapID ~= LocPin.mapID then
-        WorldMapFrame:SetMapID(LocPin.mapID)
+    if shownMapID and shownMapID ~= LocPin.mapID then
+        if LocPin.marker then LocPin.marker:Hide() end
+        return
     end
 
     local canvas = getMapCanvas()
@@ -326,12 +483,12 @@ end
 
 local function setPin(mapID, zoneName, x, y, name, pinType, desc)
     if not mapID then
-        print("LocPin: missing mapID.")
+        LocPin:Warn("missing mapID.")
         return
     end
 
     if x < 0 or x > 100 or y < 0 or y > 100 then
-        print("LocPin: coordinates must be between 0 and 100.")
+        LocPin:Warn("coordinates must be between 0 and 100.")
         return
     end
 
@@ -346,8 +503,8 @@ local function setPin(mapID, zoneName, x, y, name, pinType, desc)
     ensureMapOpenOnPinnedZone()
     updateMarker()
 
-    print(string.format(
-        "LocPin: %s %.1f, %.1f in %s.",
+    LocPin:Info(string.format(
+        "%s %.1f, %.1f in %s.",
         LocPin.name or "Pin",
         x,
         y,
@@ -368,7 +525,7 @@ local function clearPin()
         LocPin.marker:Hide()
     end
 
-    print("LocPin: cleared pin.")
+    LocPin:Info("cleared pin.")
 end
 
 local function probeLine(group, check, ok, details)
@@ -585,11 +742,7 @@ local function printDiagnosticFull(prefix)
     ))
 end
 
--- Simple command for you:
--- /loc 81.2,30.1
--- /loc 81.2 30.1
--- /loc clears
-SlashCmdList["LOCPIN"] = function(msg)
+function LocPin:HandleLocCommand(msg)
     msg = msg or ""
 
     if msg:match("^%s*$") then
@@ -600,26 +753,23 @@ SlashCmdList["LOCPIN"] = function(msg)
     local x, y = parseCoords(msg)
 
     if not x or not y then
-        print("Usage: /loc 81.2,30.1")
-        print("Or:    /loc 81.2 30.1")
-        print("Use /loc with no coordinates to clear.")
+        self:Info("Usage: /loc 81.2,30.1")
+        self:Info("Or:    /loc 81.2 30.1")
+        self:Info("Use /loc with no coordinates to clear.")
         return
     end
 
     local mapID = getCurrentZoneMapID()
 
     if not mapID then
-        print("LocPin: could not determine current zone map.")
+        self:Warn("could not determine current zone map.")
         return
     end
 
     setPin(mapID, "Current Zone", x, y, "Pin", "circle", "")
 end
 
--- Rich pin command:
--- /locpin Keeshan "Redridge Mountains" 28.5,12.1 circle "Corporal Keeshan - Missing In Action"
--- /locpin "Corporal Keeshan" "Redridge Mountains" 28.5 12.1 circle "Missing In Action"
-SlashCmdList["LOCPINP"] = function(msg)
+function LocPin:HandleLocPinCommand(msg)
     msg = msg or ""
 
     if msg:match("^%s*$") then
@@ -645,37 +795,94 @@ SlashCmdList["LOCPINP"] = function(msg)
     end
 
     if not name or not zoneName or not x or not y then
-        print('Usage: /locpin Name "Zone Name" 81.2,30.1 circle "Description"')
-        print('Example: /locpin Keeshan "Redridge Mountains" 28.5,12.1 circle "Missing In Action"')
+        self:Info('Usage: /lp pin Name "Zone Name" 81.2,30.1 circle "Description"')
+        self:Info('Example: /lp pin Keeshan "Redridge Mountains" 28.5,12.1 quest "Missing In Action"')
         return
     end
 
     pinType = normalizeZone(pinType or "circle")
 
     if not PIN_TEXTURES[pinType] then
-        print("LocPin: unknown pin type '" .. tostring(pinType) .. "', using circle.")
+        self:Warn("unknown pin type '" .. tostring(pinType) .. "', using circle.")
         pinType = "circle"
     end
 
     local mapID, resolvedZoneName = resolveZone(zoneName)
 
     if not mapID then
-        print("LocPin: unknown zone '" .. tostring(zoneName) .. "'. Add it to the ZONES table.")
+        self:Warn("unknown zone '" .. tostring(zoneName) .. "'. Use /lp zones for examples.")
         return
     end
 
     setPin(mapID, resolvedZoneName, x, y, name, pinType, desc)
 end
 
-SlashCmdList["LOCDIAG"] = function(msg)
-    msg = trim(msg or "")
-
-    if msg == "" or normalizeZone(msg) == "short" then
-        printDiagnosticShort("LPB1")
+function LocPin:ShowPin()
+    if not self.mapID then
+        self:Warn("no active pin to show.")
         return
     end
 
-    if normalizeZone(msg) == "binary" or normalizeZone(msg) == "full" then
+    ensureMapOpenOnPinnedZone()
+    updateMarker()
+end
+
+function LocPin:PrintStatus(verbose)
+    self:Info(string.format("version=%s interface=%s", ADDON_VERSION, tostring(INTERFACE_VERSION)))
+
+    if self.mapID and self.x and self.y then
+        self:Info(string.format(
+            "active pin %q %s %.1f,%.1f %s",
+            tostring(self.name or "Pin"),
+            tostring(self.zoneName or "mapID " .. tostring(self.mapID)),
+            self.x * 100,
+            self.y * 100,
+            tostring(self.pinType or "circle")
+        ))
+    else
+        self:Info("no active pin.")
+    end
+
+    local canvas = getMapCanvas()
+    local markerShown = self.marker and self.marker.IsShown and self.marker:IsShown() or false
+    self:Info(string.format(
+        "currentMapID=%s shownMapID=%s pinnedMapID=%s marker=%s canvas=%s",
+        tostring(getCurrentZoneMapID()),
+        tostring(getShownMapID()),
+        tostring(self.mapID),
+        markerShown and "shown" or "hidden",
+        canvas and tostring(type(canvas)) or "nil"
+    ))
+
+    if verbose and canvas and canvas.GetWidth and canvas.GetHeight then
+        self:Debug(string.format("canvas w=%.2f h=%.2f", canvas:GetWidth() or 0, canvas:GetHeight() or 0))
+    end
+end
+
+function LocPin:PrintHelp()
+    self:Info("Commands:")
+    self:Info("/loc x,y - quick pin in current zone; /loc clears")
+    self:Info('/lp pin <name> <zone> <x,y> [type] [description]')
+    self:Info("/lp here <x,y> | clear | show | status | debug | zones")
+    self:Info("/lp diag [short|full|legacy|verbose]")
+    self:Info("/lp probe [map|canvas|marker|tooltip|all]")
+end
+
+function LocPin:PrintZonesHelp()
+    self:Info("supports Classic Era outdoor zones and capitals.")
+    self:Info("examples: elwynn, westfall, redridge, stv, wpl, epl, org, tb, uc, darnassus, ungoro")
+end
+
+function LocPin:HandleDiagCommand(msg)
+    msg = trim(msg or "")
+    local mode = normalizeZone(msg)
+
+    if mode == "" or mode == "short" then
+        printDiagnosticShort(DIAGNOSTIC_PREFIX)
+        return
+    end
+
+    if mode == "binary" or mode == "full" then
         printDiagnosticFull("LPB11508")
         return
     end
@@ -717,7 +924,7 @@ SlashCmdList["LOCDIAG"] = function(msg)
     print("CurrentZoneMapID:" .. tostring(getCurrentZoneMapID()))
     print("ShownMapID:" .. tostring(getShownMapID()))
 
-    if normalizeZone(msg) == "verbose" then
+    if mode == "verbose" then
         local mapPass, mapTotal = runMapProbe()
         local canvasPass, canvasTotal = runCanvasProbe()
         local markerPass, markerTotal = runMarkerProbe()
@@ -729,11 +936,18 @@ SlashCmdList["LOCDIAG"] = function(msg)
     end
 end
 
-SlashCmdList["LOCPROBE"] = function(msg)
-    local which = normalizeZone(msg)
+function LocPin:HandleProbeCommand(msg)
+    local which, rest = consumeToken(msg or "")
+    which = normalizeZone(which)
+    local verbose = normalizeZone(rest) == "verbose"
     if which == "" then which = "all" end
 
     local pass, total = 0, 0
+
+    if verbose and (which == "map" or which == "all") then
+        probeLine("MAP", "C_Map.GetBestMapForUnit-call", true, formatDiagnostic(diagnosticCall(C_Map and C_Map.GetBestMapForUnit, "player")))
+        probeLine("MAP", "WorldMapFrame.GetMapID-call", true, formatDiagnostic(diagnosticCall(WorldMapFrame and WorldMapFrame.GetMapID, WorldMapFrame)))
+    end
 
     if which == "map" or which == "all" then
         local p, t = runMapProbe()
@@ -760,11 +974,78 @@ SlashCmdList["LOCPROBE"] = function(msg)
     end
 
     if total == 0 then
-        print("Usage: /locprobe [map|canvas|marker|tooltip|all]")
+        self:Info("Usage: /lp probe [map|canvas|marker|tooltip|all] [verbose]")
         return
     end
 
     print(string.format("LP11508|SUMMARY|locprobe-%s|OK|%d/%d checks passed", which, pass, total))
+end
+
+function LocPin:HandleRootCommand(msg)
+    local command, rest = consumeToken(msg or "")
+    command = normalizeZone(command or "")
+
+    if command == "" or command == "help" then
+        self:PrintHelp()
+    elseif command == "pin" or command == "set" or command == "add" then
+        self:HandleLocPinCommand(rest)
+    elseif command == "here" then
+        self:HandleLocCommand(rest)
+    elseif command == "clear" then
+        clearPin()
+    elseif command == "show" then
+        self:ShowPin()
+    elseif command == "status" then
+        self:PrintStatus(false)
+    elseif command == "debug" then
+        self:PrintStatus(true)
+    elseif command == "diag" then
+        self:HandleDiagCommand(rest)
+    elseif command == "probe" then
+        self:HandleProbeCommand(rest)
+    elseif command == "zones" then
+        self:PrintZonesHelp()
+    else
+        self:Warn("unknown /lp command: " .. tostring(command))
+        self:PrintHelp()
+    end
+end
+
+-- Simple command for you:
+-- /loc 81.2,30.1
+-- /loc 81.2 30.1
+-- /loc clears
+SlashCmdList["LOCPIN"] = function(msg)
+    LocPin:RunCommand("/loc", function()
+        LocPin:HandleLocCommand(msg)
+    end)
+end
+
+-- Rich pin command:
+-- /locpin Keeshan "Redridge Mountains" 28.5,12.1 circle "Corporal Keeshan - Missing In Action"
+-- /locpin "Corporal Keeshan" "Redridge Mountains" 28.5 12.1 circle "Missing In Action"
+SlashCmdList["LOCPINP"] = function(msg)
+    LocPin:RunCommand("/locpin", function()
+        LocPin:HandleLocPinCommand(msg)
+    end)
+end
+
+SlashCmdList["LOCDIAG"] = function(msg)
+    LocPin:RunCommand("/locdiag", function()
+        LocPin:HandleDiagCommand(msg)
+    end)
+end
+
+SlashCmdList["LOCPROBE"] = function(msg)
+    LocPin:RunCommand("/locprobe", function()
+        LocPin:HandleProbeCommand(msg)
+    end)
+end
+
+SlashCmdList["LOCPINROOT"] = function(msg)
+    LocPin:RunCommand("/lp", function()
+        LocPin:HandleRootCommand(msg)
+    end)
 end
 
 local watcher = CreateFrame("Frame")
