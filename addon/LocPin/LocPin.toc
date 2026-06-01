@@ -1,7 +1,7 @@
 ## Interface: 11508
 ## Title: LocPin
-## Notes: Adds /loc and /locpin commands for creating world map pins.
+## Notes: Adds /loc and /locpin commands for creating session-only world map pins.
 ## Author: panchoesc
-## Version: 1.0
+## Version: 1.1
 
 LocPin.lua
