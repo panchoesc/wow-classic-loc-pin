@@ -103,6 +103,23 @@ Add a named pin in a specific zone:
 /lp pin "Keeshan" "Redridge Mountains" 28.5,12.1 quest "Missing In Action"
 ```
 
+Add several pins at once with `;` between entries:
+
+```text
+/lp batch "STV Camp" stv 35,45 skull "Camp"; "IF Bank" ironforge 35,60 square
+```
+
+Each batch entry uses:
+
+```text
+<name> <zone> <x,y> [type] ["description"]
+```
+
+Descriptions are optional, but must be quoted when included. Batch commands are
+limited by WoW's chat/slash-command input length, which can vary by client and
+UI path. As a practical rule, keep each `/lp batch` command under roughly 255
+characters and split long batches across multiple commands.
+
 List session pins:
 
 ```text
@@ -147,6 +164,7 @@ Show zone/alias examples:
 /lp pin "STV Camp" stv 35,45 skull "Camp location"
 /lp pin "Ironforge Bank" ironforge 35,60 square "Bank/AH area"
 /lp pin "Un'Goro Route" ungoro 44,66 diamond "Route marker"
+/lp batch "STV Camp" stv 35,45 skull "Camp"; "IF Bank" ironforge 35,60 square
 /lp list
 /lp show 2
 /lp remove 2

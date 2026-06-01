@@ -335,6 +335,103 @@ local function parseCoords(s)
     return x, y, rest
 end
 
+local function splitBatchEntries(s)
+    local entries = {}
+    s = s or ""
+    local current = {}
+    local inQuote = false
+
+    for i = 1, #s do
+        local c = s:sub(i, i)
+
+        if c == '"' then
+            inQuote = not inQuote
+            current[#current + 1] = c
+        elseif c == ";" and not inQuote then
+            local entry = trim(table.concat(current))
+            if entry ~= "" then
+                entries[#entries + 1] = entry
+            end
+            current = {}
+        else
+            current[#current + 1] = c
+        end
+    end
+
+    local entry = trim(table.concat(current))
+    if entry ~= "" then
+        entries[#entries + 1] = entry
+    end
+
+    return entries
+end
+
+local function consumeQuotedOnly(s)
+    s = trim(s or "")
+
+    if s == "" then
+        return "", ""
+    end
+
+    if s:sub(1, 1) ~= '"' then
+        return nil, s
+    end
+
+    local value, rest = s:match('^"([^"]*)"%s*(.*)$')
+    return value, rest
+end
+
+local function parseBatchTypeAndDescription(rest)
+    rest = trim(rest or "")
+    local pinType = "circle"
+    local desc = ""
+
+    if rest == "" then
+        return pinType, desc, nil
+    end
+
+    if rest:sub(1, 1) == '"' then
+        desc, rest = consumeQuotedOnly(rest)
+        if desc == nil then
+            return nil, nil, "description must be quoted"
+        end
+
+        if trim(rest) ~= "" then
+            return nil, nil, "unexpected text after description"
+        end
+
+        return pinType, desc, nil
+    end
+
+    pinType, rest = consumeToken(rest)
+    pinType = normalizeZone(pinType or "circle")
+
+    if not PIN_TEXTURES[pinType] then
+        LocPin:Warn("unknown pin type '" .. tostring(pinType) .. "', using circle.")
+        pinType = "circle"
+    end
+
+    rest = trim(rest or "")
+    if rest == "" then
+        return pinType, desc, nil
+    end
+
+    if rest:sub(1, 1) ~= '"' then
+        return nil, nil, "quote descriptions in batch entries"
+    end
+
+    desc, rest = consumeQuotedOnly(rest)
+    if desc == nil then
+        return nil, nil, "description must be quoted"
+    end
+
+    if trim(rest) ~= "" then
+        return nil, nil, "unexpected text after description"
+    end
+
+    return pinType, desc, nil
+end
+
 local function getMapCanvas()
     if not WorldMapFrame then return nil end
 
@@ -928,6 +1025,59 @@ function LocPin:HandleLocPinCommand(msg)
     addPin(mapID, resolvedZoneName, x, y, name, pinType, desc)
 end
 
+function LocPin:HandleBatchCommand(msg)
+    msg = trim(msg or "")
+
+    if msg == "" then
+        self:Info('Usage: /lp batch <name> <zone> <x,y> [type] ["desc"]; ...')
+        self:Info('Example: /lp batch "STV Camp" stv 35,45 skull "Camp"; "IF Bank" ironforge 35,60 square')
+        self:Info("Keep batch commands short; split long batches across multiple commands.")
+        return
+    end
+
+    local entries = splitBatchEntries(msg)
+    local added = 0
+
+    if #entries == 0 then
+        self:Warn("no batch entries found.")
+        return
+    end
+
+    for index, entry in ipairs(entries) do
+        local name, rest = consumeToken(entry)
+        local zoneName
+        zoneName, rest = consumeToken(rest)
+
+        local x, y
+        x, y, rest = parseCoords(rest)
+
+        if not name or not zoneName or not x or not y then
+            self:Warn("batch entry " .. tostring(index) .. " invalid. Use <name> <zone> <x,y> [type] [\"desc\"].")
+        else
+            local pinType, desc, err = parseBatchTypeAndDescription(rest)
+
+            if err then
+                self:Warn("batch entry " .. tostring(index) .. " invalid: " .. tostring(err) .. ".")
+            else
+                local mapID, resolvedZoneName = resolveZone(zoneName)
+
+                if not mapID then
+                    self:Warn("batch entry " .. tostring(index) .. " unknown zone '" .. tostring(zoneName) .. "'.")
+                else
+                    local beforeCount = getPinCount()
+                    addPin(mapID, resolvedZoneName, x, y, name, pinType, desc)
+
+                    if getPinCount() > beforeCount then
+                        added = added + 1
+                    end
+                end
+            end
+        end
+    end
+
+    self:Info("batch added " .. tostring(added) .. "/" .. tostring(#entries) .. " pin" .. (added == 1 and "" or "s") .. ".")
+end
+
 function LocPin:ShowPin(selector)
     local pin = findPin(selector)
 
@@ -1014,7 +1164,9 @@ function LocPin:PrintHelp()
     self:Info("Commands:")
     self:Info("/loc x,y - add quick pin in current zone; /loc clears all pins")
     self:Info('/lp pin <name> <zone> <x,y> [type] [description]')
+    self:Info('/lp batch <name> <zone> <x,y> [type] ["desc"]; ...')
     self:Info("/lp here <x,y> | list | remove <id|name> | clear | show [id|name]")
+    self:Info("Batch descriptions must be quoted; split long batches.")
     self:Info("/lp status | debug | zones")
     self:Info("/lp diag [short|full|legacy|verbose]")
     self:Info("/lp probe [map|canvas|marker|tooltip|all]")
@@ -1141,6 +1293,8 @@ function LocPin:HandleRootCommand(msg)
         self:PrintHelp()
     elseif command == "pin" or command == "set" or command == "add" then
         self:HandleLocPinCommand(rest)
+    elseif command == "batch" or command == "multi" then
+        self:HandleBatchCommand(rest)
     elseif command == "here" then
         self:HandleLocCommand(rest)
     elseif command == "list" or command == "pins" then
