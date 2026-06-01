@@ -5,19 +5,15 @@ SLASH_LOCPROBE1 = "/locprobe"
 SLASH_LOCPINROOT1 = "/lp"
 
 local ADDON_NAME = "LocPin"
-local ADDON_VERSION = "1.0"
+local ADDON_VERSION = "1.1"
 local INTERFACE_VERSION = 11508
 local DIAGNOSTIC_PREFIX = "LPB1"
+local MAX_PINS = 100
 
 local LocPin = {
-    x = nil,
-    y = nil,
-    mapID = nil,
-    zoneName = nil,
-    name = nil,
-    desc = nil,
-    pinType = "circle",
-    marker = nil,
+    pins = {},
+    nextPinID = 1,
+    activePinID = nil,
 }
 
 local function printRaw(message)
@@ -355,7 +351,15 @@ local function getMapCanvas()
     return WorldMapFrame
 end
 
-local function ensureMapOpenOnPinnedZone()
+local function getPinCount()
+    local count = 0
+    for _ in pairs(LocPin.pins) do
+        count = count + 1
+    end
+    return count
+end
+
+local function ensureMapOpenOnMap(mapID)
     if not WorldMapFrame then
         LocPin:Warn("WorldMapFrame not available.")
         return false
@@ -369,24 +373,66 @@ local function ensureMapOpenOnPinnedZone()
         end
     end
 
-    if LocPin.mapID and WorldMapFrame.SetMapID then
-        WorldMapFrame:SetMapID(LocPin.mapID)
+    if mapID and WorldMapFrame.SetMapID then
+        WorldMapFrame:SetMapID(mapID)
     end
 
     return true
 end
 
-local function applyPinTexture()
-    if not LocPin.marker or not LocPin.marker.icon then return end
-
-    local pinType = LocPin.pinType or "circle"
-    local texture = PIN_TEXTURES[pinType] or PIN_TEXTURES.circle
-
-    LocPin.marker.icon:SetTexture(texture)
+local function getActivePin()
+    if LocPin.activePinID then
+        return LocPin.pins[LocPin.activePinID]
+    end
+    return nil
 end
 
-local function ensureMarker()
-    if LocPin.marker then return LocPin.marker end
+local function findPin(selector)
+    selector = trim(selector or "")
+    if selector == "" then return getActivePin() end
+
+    if selector:sub(1, 1) == '"' then
+        local quoted = consumeToken(selector)
+        if quoted and quoted ~= "" then
+            selector = quoted
+        end
+    end
+
+    local id = tonumber(selector)
+    if id and LocPin.pins[id] then
+        return LocPin.pins[id]
+    end
+
+    local wanted = normalizeZone(selector)
+    local match = nil
+    local matches = 0
+
+    for _, pin in pairs(LocPin.pins) do
+        if normalizeZone(pin.name or "") == wanted then
+            match = pin
+            matches = matches + 1
+        end
+    end
+
+    if matches > 1 then
+        LocPin:Warn("multiple pins named '" .. selector .. "'. Use /lp list and then select by ID.")
+        return nil
+    end
+
+    return match
+end
+
+local function applyPinTexture(pin)
+    if not pin or not pin.marker or not pin.marker.icon then return end
+
+    local pinType = pin.pinType or "circle"
+    local texture = PIN_TEXTURES[pinType] or PIN_TEXTURES.circle
+
+    pin.marker.icon:SetTexture(texture)
+end
+
+local function ensureMarker(pin)
+    if pin.marker then return pin.marker end
 
     local canvas = getMapCanvas()
 
@@ -395,7 +441,7 @@ local function ensureMarker()
         return nil
     end
 
-    local marker = CreateFrame("Frame", "LocPinMarker", canvas)
+    local marker = CreateFrame("Frame", "LocPinMarker" .. tostring(pin.id), canvas)
     marker:SetSize(52, 52)
     marker:SetFrameStrata("TOOLTIP")
     marker:EnableMouse(true)
@@ -410,19 +456,23 @@ local function ensureMarker()
     marker.label:SetPoint("TOP", marker.icon, "BOTTOM", 0, -1)
 
     marker:SetScript("OnEnter", function(self)
+        local markerPin = self.pin
+        if not markerPin then return end
+
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(LocPin.name or "LocPin", 1, 1, 1)
+        GameTooltip:AddLine(markerPin.name or "LocPin", 1, 1, 1)
+        GameTooltip:AddLine("ID " .. tostring(markerPin.id), 0.6, 0.8, 1)
 
-        if LocPin.zoneName then
-            GameTooltip:AddLine(LocPin.zoneName, 0.8, 0.8, 0.8)
+        if markerPin.zoneName then
+            GameTooltip:AddLine(markerPin.zoneName, 0.8, 0.8, 0.8)
         end
 
-        if LocPin.x and LocPin.y then
-            GameTooltip:AddLine(string.format("%.1f, %.1f", LocPin.x * 100, LocPin.y * 100), 1, 0.82, 0)
+        if markerPin.x and markerPin.y then
+            GameTooltip:AddLine(string.format("%.1f, %.1f", markerPin.x * 100, markerPin.y * 100), 1, 0.82, 0)
         end
 
-        if LocPin.desc and LocPin.desc ~= "" then
-            GameTooltip:AddLine(LocPin.desc, 0.9, 0.9, 0.9, true)
+        if markerPin.desc and markerPin.desc ~= "" then
+            GameTooltip:AddLine(markerPin.desc, 0.9, 0.9, 0.9, true)
         end
 
         GameTooltip:Show()
@@ -432,33 +482,38 @@ local function ensureMarker()
         GameTooltip:Hide()
     end)
 
-    LocPin.marker = marker
-    applyPinTexture()
+    pin.marker = marker
+    marker.pin = pin
+    applyPinTexture(pin)
 
     return marker
 end
 
-local function updateMarker()
-    if not LocPin.x or not LocPin.y or not LocPin.mapID then
-        if LocPin.marker then LocPin.marker:Hide() end
+local function hidePinMarker(pin)
+    if pin and pin.marker then
+        pin.marker:Hide()
+    end
+end
+
+local function updatePinMarker(pin, canvas, shownMapID)
+    if not pin or not pin.x or not pin.y or not pin.mapID then
+        hidePinMarker(pin)
         return
     end
 
-    local shownMapID = getShownMapID()
-
-    if shownMapID and shownMapID ~= LocPin.mapID then
-        if LocPin.marker then LocPin.marker:Hide() end
+    if shownMapID and shownMapID ~= pin.mapID then
+        hidePinMarker(pin)
         return
     end
 
-    local canvas = getMapCanvas()
     if not canvas then return end
 
-    local marker = ensureMarker()
+    local marker = ensureMarker(pin)
     if not marker then return end
 
-    applyPinTexture()
+    applyPinTexture(pin)
 
+    marker.pin = pin
     marker:SetParent(canvas)
     marker:ClearAllPoints()
 
@@ -470,18 +525,27 @@ local function updateMarker()
         return
     end
 
-    marker:SetPoint("CENTER", canvas, "TOPLEFT", LocPin.x * w, -LocPin.y * h)
+    marker:SetPoint("CENTER", canvas, "TOPLEFT", pin.x * w, -pin.y * h)
 
-    if LocPin.name and LocPin.name ~= "" then
-        marker.label:SetText(LocPin.name)
+    if pin.name and pin.name ~= "" then
+        marker.label:SetText(pin.name)
     else
-        marker.label:SetText(string.format("%.1f, %.1f", LocPin.x * 100, LocPin.y * 100))
+        marker.label:SetText(string.format("%.1f, %.1f", pin.x * 100, pin.y * 100))
     end
 
     marker:Show()
 end
 
-local function setPin(mapID, zoneName, x, y, name, pinType, desc)
+local function updateMarkers()
+    local canvas = getMapCanvas()
+    local shownMapID = getShownMapID()
+
+    for _, pin in pairs(LocPin.pins) do
+        updatePinMarker(pin, canvas, shownMapID)
+    end
+end
+
+local function addPin(mapID, zoneName, x, y, name, pinType, desc)
     if not mapID then
         LocPin:Warn("missing mapID.")
         return
@@ -492,40 +556,87 @@ local function setPin(mapID, zoneName, x, y, name, pinType, desc)
         return
     end
 
-    LocPin.mapID = mapID
-    LocPin.zoneName = zoneName
-    LocPin.x = x / 100
-    LocPin.y = y / 100
-    LocPin.name = name or "Pin"
-    LocPin.pinType = pinType or "circle"
-    LocPin.desc = desc or ""
+    if getPinCount() >= MAX_PINS then
+        LocPin:Warn("pin limit reached (" .. tostring(MAX_PINS) .. "). Remove or clear pins before adding more.")
+        return
+    end
 
-    ensureMapOpenOnPinnedZone()
-    updateMarker()
+    local id = LocPin.nextPinID
+    LocPin.nextPinID = LocPin.nextPinID + 1
+
+    local pin = {
+        id = id,
+        mapID = mapID,
+        zoneName = zoneName,
+        x = x / 100,
+        y = y / 100,
+        name = name or ("Pin " .. tostring(id)),
+        pinType = pinType or "circle",
+        desc = desc or "",
+        marker = nil,
+    }
+
+    LocPin.pins[id] = pin
+    LocPin.activePinID = id
+
+    ensureMapOpenOnMap(pin.mapID)
+    updateMarkers()
 
     LocPin:Info(string.format(
-        "%s %.1f, %.1f in %s.",
-        LocPin.name or "Pin",
+        "added #%d %s %.1f, %.1f in %s.",
+        pin.id,
+        pin.name or "Pin",
         x,
         y,
-        LocPin.zoneName or "mapID " .. tostring(mapID)
+        pin.zoneName or "mapID " .. tostring(mapID)
     ))
 end
 
-local function clearPin()
-    LocPin.x = nil
-    LocPin.y = nil
-    LocPin.mapID = nil
-    LocPin.zoneName = nil
-    LocPin.name = nil
-    LocPin.desc = nil
-    LocPin.pinType = "circle"
+local function clearPins()
+    local count = getPinCount()
 
-    if LocPin.marker then
-        LocPin.marker:Hide()
+    for _, pin in pairs(LocPin.pins) do
+        hidePinMarker(pin)
+        if pin.marker then
+            pin.marker.pin = nil
+        end
     end
 
-    LocPin:Info("cleared pin.")
+    LocPin.pins = {}
+    LocPin.activePinID = nil
+
+    LocPin:Info("cleared " .. tostring(count) .. " pin" .. (count == 1 and "" or "s") .. ".")
+end
+
+local function removePin(selector)
+    if trim(selector or "") == "" then
+        LocPin:Info("Usage: /lp remove <id|name>")
+        return
+    end
+
+    local pin = findPin(selector)
+
+    if not pin then
+        LocPin:Warn("pin not found. Use /lp list to see current pins.")
+        return
+    end
+
+    hidePinMarker(pin)
+    if pin.marker then
+        pin.marker.pin = nil
+    end
+
+    LocPin.pins[pin.id] = nil
+
+    if LocPin.activePinID == pin.id then
+        LocPin.activePinID = nil
+        for id in pairs(LocPin.pins) do
+            LocPin.activePinID = id
+            break
+        end
+    end
+
+    LocPin:Info("removed #" .. tostring(pin.id) .. " " .. tostring(pin.name or "Pin") .. ".")
 end
 
 local function probeLine(group, check, ok, details)
@@ -746,7 +857,7 @@ function LocPin:HandleLocCommand(msg)
     msg = msg or ""
 
     if msg:match("^%s*$") then
-        clearPin()
+        clearPins()
         return
     end
 
@@ -755,7 +866,7 @@ function LocPin:HandleLocCommand(msg)
     if not x or not y then
         self:Info("Usage: /loc 81.2,30.1")
         self:Info("Or:    /loc 81.2 30.1")
-        self:Info("Use /loc with no coordinates to clear.")
+        self:Info("Use /loc with no coordinates to clear all pins.")
         return
     end
 
@@ -766,14 +877,14 @@ function LocPin:HandleLocCommand(msg)
         return
     end
 
-    setPin(mapID, "Current Zone", x, y, "Pin", "circle", "")
+    addPin(mapID, "Current Zone", x, y, nil, "circle", "")
 end
 
 function LocPin:HandleLocPinCommand(msg)
     msg = msg or ""
 
     if msg:match("^%s*$") then
-        clearPin()
+        clearPins()
         return
     end
 
@@ -814,43 +925,83 @@ function LocPin:HandleLocPinCommand(msg)
         return
     end
 
-    setPin(mapID, resolvedZoneName, x, y, name, pinType, desc)
+    addPin(mapID, resolvedZoneName, x, y, name, pinType, desc)
 end
 
-function LocPin:ShowPin()
-    if not self.mapID then
-        self:Warn("no active pin to show.")
+function LocPin:ShowPin(selector)
+    local pin = findPin(selector)
+
+    if not pin then
+        self:Warn("no pin to show. Use /lp list to see current pins.")
         return
     end
 
-    ensureMapOpenOnPinnedZone()
-    updateMarker()
+    self.activePinID = pin.id
+    ensureMapOpenOnMap(pin.mapID)
+    updateMarkers()
+end
+
+function LocPin:ListPins()
+    local count = getPinCount()
+
+    if count == 0 then
+        self:Info("no pins.")
+        return
+    end
+
+    self:Info("pins:")
+    for id = 1, self.nextPinID - 1 do
+        local pin = self.pins[id]
+        if pin then
+            local active = id == self.activePinID and "*" or " "
+            self:Info(string.format(
+                "%s#%d %q %s %.1f,%.1f %s",
+                active,
+                pin.id,
+                tostring(pin.name or "Pin"),
+                tostring(pin.zoneName or "mapID " .. tostring(pin.mapID)),
+                (pin.x or 0) * 100,
+                (pin.y or 0) * 100,
+                tostring(pin.pinType or "circle")
+            ))
+        end
+    end
 end
 
 function LocPin:PrintStatus(verbose)
     self:Info(string.format("version=%s interface=%s", ADDON_VERSION, tostring(INTERFACE_VERSION)))
 
-    if self.mapID and self.x and self.y then
+    local count = getPinCount()
+    local activePin = getActivePin()
+
+    if activePin then
         self:Info(string.format(
-            "active pin %q %s %.1f,%.1f %s",
-            tostring(self.name or "Pin"),
-            tostring(self.zoneName or "mapID " .. tostring(self.mapID)),
-            self.x * 100,
-            self.y * 100,
-            tostring(self.pinType or "circle")
+            "pins=%d active #%d %q %s %.1f,%.1f %s",
+            count,
+            activePin.id,
+            tostring(activePin.name or "Pin"),
+            tostring(activePin.zoneName or "mapID " .. tostring(activePin.mapID)),
+            activePin.x * 100,
+            activePin.y * 100,
+            tostring(activePin.pinType or "circle")
         ))
     else
-        self:Info("no active pin.")
+        self:Info("pins=0 no active pin.")
     end
 
     local canvas = getMapCanvas()
-    local markerShown = self.marker and self.marker.IsShown and self.marker:IsShown() or false
+    local shownMarkers = 0
+    for _, pin in pairs(self.pins) do
+        if pin.marker and pin.marker.IsShown and pin.marker:IsShown() then
+            shownMarkers = shownMarkers + 1
+        end
+    end
+
     self:Info(string.format(
-        "currentMapID=%s shownMapID=%s pinnedMapID=%s marker=%s canvas=%s",
+        "currentMapID=%s shownMapID=%s shownMarkers=%d canvas=%s",
         tostring(getCurrentZoneMapID()),
         tostring(getShownMapID()),
-        tostring(self.mapID),
-        markerShown and "shown" or "hidden",
+        shownMarkers,
         canvas and tostring(type(canvas)) or "nil"
     ))
 
@@ -861,9 +1012,10 @@ end
 
 function LocPin:PrintHelp()
     self:Info("Commands:")
-    self:Info("/loc x,y - quick pin in current zone; /loc clears")
+    self:Info("/loc x,y - add quick pin in current zone; /loc clears all pins")
     self:Info('/lp pin <name> <zone> <x,y> [type] [description]')
-    self:Info("/lp here <x,y> | clear | show | status | debug | zones")
+    self:Info("/lp here <x,y> | list | remove <id|name> | clear | show [id|name]")
+    self:Info("/lp status | debug | zones")
     self:Info("/lp diag [short|full|legacy|verbose]")
     self:Info("/lp probe [map|canvas|marker|tooltip|all]")
 end
@@ -991,10 +1143,14 @@ function LocPin:HandleRootCommand(msg)
         self:HandleLocPinCommand(rest)
     elseif command == "here" then
         self:HandleLocCommand(rest)
+    elseif command == "list" or command == "pins" then
+        self:ListPins()
+    elseif command == "remove" or command == "delete" or command == "rm" then
+        removePin(rest)
     elseif command == "clear" then
-        clearPin()
+        clearPins()
     elseif command == "show" then
-        self:ShowPin()
+        self:ShowPin(rest)
     elseif command == "status" then
         self:PrintStatus(false)
     elseif command == "debug" then
@@ -1014,7 +1170,7 @@ end
 -- Simple command for you:
 -- /loc 81.2,30.1
 -- /loc 81.2 30.1
--- /loc clears
+-- /loc clears all pins
 SlashCmdList["LOCPIN"] = function(msg)
     LocPin:RunCommand("/loc", function()
         LocPin:HandleLocCommand(msg)
@@ -1049,8 +1205,15 @@ SlashCmdList["LOCPINROOT"] = function(msg)
 end
 
 local watcher = CreateFrame("Frame")
-watcher:SetScript("OnUpdate", function()
+local markerUpdateElapsed = 0
+watcher:SetScript("OnUpdate", function(_, elapsed)
     if WorldMapFrame and WorldMapFrame:IsShown() then
-        updateMarker()
+        markerUpdateElapsed = markerUpdateElapsed + (elapsed or 0)
+        if markerUpdateElapsed >= 0.1 then
+            markerUpdateElapsed = 0
+            updateMarkers()
+        end
+    else
+        markerUpdateElapsed = 0
     end
 end)

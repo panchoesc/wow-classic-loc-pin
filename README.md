@@ -66,15 +66,18 @@ Then confirm **LocPin** is enabled in the AddOns list.
 
 ## Commands
 
-### Quick pin
+### Quick pins
 
-Place a pin in your current zone:
+Add a pin in your current zone:
 
 ```text
 /loc 50,50
 ```
 
-Clear the active pin:
+Run the command again to add more pins in the current zone. Quick pins are named
+`Pin 1`, `Pin 2`, and so on.
+
+Clear all session pins:
 
 ```text
 /loc
@@ -88,25 +91,45 @@ Show help:
 /lp help
 ```
 
-Place a pin in your current zone:
+Add a pin in your current zone:
 
 ```text
 /lp here 50,50
 ```
 
-Place a named pin in a specific zone:
+Add a named pin in a specific zone:
 
 ```text
 /lp pin "Keeshan" "Redridge Mountains" 28.5,12.1 quest "Missing In Action"
 ```
 
-Jump back to the active pin's map:
+List session pins:
+
+```text
+/lp list
+```
+
+Jump back to the latest active pin's map:
 
 ```text
 /lp show
 ```
 
-Clear the active pin:
+Jump to a specific pin's map by ID or name:
+
+```text
+/lp show 2
+/lp show "Keeshan"
+```
+
+Remove one pin by ID or name:
+
+```text
+/lp remove 2
+/lp remove "Keeshan"
+```
+
+Clear all session pins:
 
 ```text
 /lp clear
@@ -124,6 +147,9 @@ Show zone/alias examples:
 /lp pin "STV Camp" stv 35,45 skull "Camp location"
 /lp pin "Ironforge Bank" ironforge 35,60 square "Bank/AH area"
 /lp pin "Un'Goro Route" ungoro 44,66 diamond "Route marker"
+/lp list
+/lp show 2
+/lp remove 2
 ```
 
 ## Supported pin types
@@ -142,8 +168,9 @@ Show zone/alias examples:
 ## Notes
 
 - Uses `C_Map.GetBestMapForUnit("player")` for current-zone pins.
+- Pins are session-only and do not persist through `/reload` or logout.
 - Supports Classic Era outdoor zones and capital cities by name.
 - Common aliases include `stv`, `wpl`, `epl`, `org`, `tb`, `uc`, and `ungoro`.
 - Draws a custom overlay marker on the world map canvas.
-- The marker shows a tooltip with name, zone, coordinates, and description when hovered.
-- Browsing to another map will hide the active marker instead of locking your map view.
+- Each marker shows a tooltip with ID, name, zone, coordinates, and description when hovered.
+- Browsing to another map will hide pins from other maps instead of locking your map view.
